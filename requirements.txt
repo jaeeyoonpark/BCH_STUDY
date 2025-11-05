@@ -1,0 +1,15 @@
+# BCH 코드 Berlekamp-Massey 학습 프로젝트 의존성
+
+# 기본 수치 연산
+numpy>=1.20.0
+
+# Jupyter 노트북
+jupyter>=1.0.0
+notebook>=6.4.0
+ipython>=7.20.0
+
+# 시각화
+matplotlib>=3.3.0
+
+# 추가 유용한 도구 (선택사항)
+pandas>=1.2.0
