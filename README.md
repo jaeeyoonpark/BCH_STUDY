@@ -8,9 +8,10 @@ BCH 코드 디코딩의 핵심인 **Berlekamp-Massey (BM) 알고리즘**을 수�
 
 1. **GF(2^m) 유한체 구현**: BCH 코드의 수학적 기반
 2. **BCH 인코더/디코더**: 완전한 BCH 코드 시스템
-3. **Berlekamp-Massey 알고리즘**: 상세한 단계별 구현
-4. **Chien Search**: 오류 위치 탐색 알고리즘
-5. **학습용 Jupyter 노트북**: 대화형 학습 환경
+3. **신드롬 계산**: 두 가지 방법 (다항식 평가, 나눗셈) 상세 구현
+4. **Berlekamp-Massey 알고리즘**: 상세한 단계별 구현
+5. **Chien Search**: 오류 위치 탐색 알고리즘
+6. **학습용 Jupyter 노트북**: 대화형 학습 환경 (신드롬 계산 + BM 알고리즘)
 
 ## 디렉토리 구조
 
@@ -19,11 +20,13 @@ BCH_STUDY/
 ├── bch_learning/           # 핵심 모듈
 │   ├── __init__.py
 │   ├── galois_field.py     # GF(2^m) 유한체 구현
-│   ├── bch_code.py         # BCH 코드 및 신드롬 계산
+│   ├── bch_code.py         # BCH 코드 및 인코딩
+│   ├── syndrome_calculator.py  # 신드롬 계산 (두 가지 방법)
 │   ├── berlekamp_massey.py # BM 알고리즘 (상세 버전)
 │   └── chien_search.py     # Chien Search 및 완전 디코딩
 ├── notebooks/              # Jupyter 노트북
-│   └── berlekamp_massey_learning.ipynb  # 학습용 노트북
+│   ├── syndrome_calculation_learning.ipynb  # 신드롬 계산 학습
+│   └── berlekamp_massey_learning.ipynb      # BM 알고리즘 학습
 ├── README.md
 └── requirements.txt
 ```
