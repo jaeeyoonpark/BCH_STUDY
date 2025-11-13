@@ -1,5 +1,5 @@
 """
-Berlekamp-Massey 알고리즘 구현
+Berlekamp-Massey 알고리즘 구현 (galois 라이브러리 사용)
 
 이 알고리즘은 선형 피드백 시프트 레지스터(LFSR)의 최소 길이를 찾는 알고리즘입니다.
 BCH 디코딩에서는 신드롬으로부터 오류 위치 다항식(Error Locator Polynomial, ELP)을 찾는데 사용됩니다.
@@ -15,21 +15,22 @@ BCH 디코딩에서는 신드롬으로부터 오류 위치 다항식(Error Locat
 - 관계식: S_i + Λ_1·S_{i-1} + ... + Λ_L·S_{i-L} = 0 for i > L
 """
 
-from typing import List, Tuple, Dict
+import galois
+from typing import List, Tuple
 from dataclasses import dataclass
-from .galois_field import GFElement, gf_poly_eval, gf_poly_str
+from .gf_utils import gf_poly_str, format_gf_element
 
 
 @dataclass
 class BMIteration:
     """BM 알고리즘의 각 반복 정보"""
     iteration: int  # 반복 번호 (k)
-    syndrome_used: GFElement  # 사용된 신드롬 S_k
-    current_poly: List[GFElement]  # 현재 다항식 Λ^(k)
-    discrepancy: GFElement  # 불일치 Δ_k
+    syndrome_used: galois.FieldArray  # 사용된 신드롬 S_k
+    current_poly: List[galois.FieldArray]  # 현재 다항식 Λ^(k)
+    discrepancy: galois.FieldArray  # 불일치 Δ_k
     length: int  # 현재 다항식 길이 L_k
     update_occurred: bool  # 업데이트 발생 여부
-    temp_poly: List[GFElement]  # 임시 저장 다항식 B^(k)
+    temp_poly: List[galois.FieldArray]  # 임시 저장 다항식 B^(k)
     m_value: int  # m 값 (마지막 업데이트 이후 반복 수)
     explanation: str  # 단계 설명
 
@@ -41,7 +42,7 @@ class BerlekampMassey:
     신드롬 시퀀스로부터 오류 위치 다항식(Error Locator Polynomial)을 찾습니다.
     """
 
-    def __init__(self, syndromes: List[GFElement], verbose: bool = True):
+    def __init__(self, syndromes: List[galois.FieldArray], verbose: bool = True):
         """
         초기화
 
@@ -51,13 +52,17 @@ class BerlekampMassey:
         """
         self.syndromes = syndromes
         self.verbose = verbose
-        self.field = syndromes[0].field if syndromes else None
+        # galois 라이브러리의 필드는 클래스 속성으로 접근
+        if syndromes and len(syndromes) > 0:
+            self.gf = type(syndromes[0])  # 필드 클래스
+        else:
+            self.gf = None
 
         # 알고리즘 상태
         self.iterations: List[BMIteration] = []
-        self.final_poly: List[GFElement] = None
+        self.final_poly: List[galois.FieldArray] = None
 
-    def run(self) -> Tuple[List[GFElement], List[BMIteration]]:
+    def run(self) -> Tuple[List[galois.FieldArray], List[BMIteration]]:
         """
         BM 알고리즘 실행
 
@@ -65,20 +70,21 @@ class BerlekampMassey:
             (오류 위치 다항식, 반복 정보 리스트)
         """
         if not self.syndromes:
-            return [self.field.one()], []
+            return [self.gf(1)], []
 
         # 초기화
-        Lambda = [self.field.one()]  # Λ^(0)(x) = 1
-        B = [self.field.one()]  # B^(0)(x) = 1
+        Lambda = [self.gf(1)]  # Λ^(0)(x) = 1
+        B = [self.gf(1)]  # B^(0)(x) = 1
         L = 0  # 다항식 길이
         m = 1  # 마지막 업데이트 이후 반복 수
-        b = self.field.one()  # 마지막 업데이트 시의 discrepancy
+        b = self.gf(1)  # 마지막 업데이트 시의 discrepancy
 
         if self.verbose:
             print("\n" + "=" * 80)
             print("Berlekamp-Massey 알고리즘 시작")
             print("=" * 80)
-            print(f"입력 신드롬: {[str(s) for s in self.syndromes]}")
+            syn_strs = [format_gf_element(s, 'power') for s in self.syndromes]
+            print(f"입력 신드롬: {syn_strs}")
             print(f"초기 상태: Λ(x) = 1, B(x) = 1, L = 0, m = 1")
             print("=" * 80)
 
@@ -95,7 +101,7 @@ class BerlekampMassey:
 
             if self.verbose:
                 print(f"\n{'━' * 80}")
-                print(f"반복 {k + 1}: 신드롬 S_{k + 1} = {S_k} 처리")
+                print(f"반복 {k + 1}: 신드롬 S_{k + 1} = {format_gf_element(S_k, 'power')} 처리")
                 print(f"{'━' * 80}")
                 print(f"현재 다항식: Λ(x) = {gf_poly_str(Lambda)}")
                 print(f"현재 길이 L = {L}, m = {m}")
@@ -105,22 +111,24 @@ class BerlekampMassey:
                 print(f"\nDiscrepancy 계산:")
                 print(f"  Δ_{k + 1} = S_{k + 1}", end="")
                 for i in range(1, len(Lambda)):
-                    if k - i >= 0 and not Lambda[i].is_zero():
+                    if k - i >= 0 and int(Lambda[i]) != 0:
                         print(f" + Λ_{i}·S_{k + 1 - i}", end="")
                 print()
-                print(f"  Δ_{k + 1} = {S_k}", end="")
+                print(f"  Δ_{k + 1} = {format_gf_element(S_k, 'power')}", end="")
                 for i in range(1, len(Lambda)):
-                    if k - i >= 0 and not Lambda[i].is_zero():
-                        print(f" + {Lambda[i]}·{self.syndromes[k - i]}", end="")
+                    if k - i >= 0 and int(Lambda[i]) != 0:
+                        lamb_str = format_gf_element(Lambda[i], 'power')
+                        syn_str = format_gf_element(self.syndromes[k - i], 'power')
+                        print(f" + {lamb_str}·{syn_str}", end="")
                 print()
-                print(f"  Δ_{k + 1} = {discrepancy}")
+                print(f"  Δ_{k + 1} = {format_gf_element(discrepancy, 'power')}")
 
             # 반복 정보 저장 (업데이트 전)
             update_occurred = False
             explanation = ""
 
             # 2단계: 다항식 갱신 여부 결정
-            if not discrepancy.is_zero():
+            if int(discrepancy) != 0:
                 # Discrepancy가 0이 아니면 업데이트 필요
                 if self.verbose:
                     print(f"\nΔ ≠ 0 이므로 다항식 갱신 필요")
@@ -132,12 +140,12 @@ class BerlekampMassey:
                 factor = discrepancy / b
 
                 # x^m · B(x) 계산
-                xm_B = [self.field.zero()] * m + B
+                xm_B = [self.gf(0)] * m + B
 
                 # Λ(x) 업데이트
                 max_len = max(len(Lambda), len(xm_B))
-                new_Lambda = Lambda + [self.field.zero()] * (max_len - len(Lambda))
-                xm_B_extended = xm_B + [self.field.zero()] * (max_len - len(xm_B))
+                new_Lambda = Lambda + [self.gf(0)] * (max_len - len(Lambda))
+                xm_B_extended = xm_B + [self.gf(0)] * (max_len - len(xm_B))
 
                 for i in range(max_len):
                     new_Lambda[i] = new_Lambda[i] + factor * xm_B_extended[i]
@@ -145,7 +153,10 @@ class BerlekampMassey:
                 if self.verbose:
                     print(f"\n다항식 갱신:")
                     print(f"  Λ_new(x) = Λ(x) + (Δ/b)·x^{m}·B(x)")
-                    print(f"  여기서 Δ/b = {discrepancy}/{b} = {factor}")
+                    disc_str = format_gf_element(discrepancy, 'power')
+                    b_str = format_gf_element(b, 'power')
+                    factor_str = format_gf_element(factor, 'power')
+                    print(f"  여기서 Δ/b = {disc_str}/{b_str} = {factor_str}")
                     print(f"  x^{m}·B(x) = {gf_poly_str(xm_B)}")
                     print(f"  Λ_new(x) = {gf_poly_str(new_Lambda)}")
 
@@ -163,7 +174,7 @@ class BerlekampMassey:
                         print(f"\n길이 갱신 조건 만족 (2L ≤ k):")
                         print(f"  새 길이 L = k + 1 - L = {k + 1} - {k + 1 - L} = {L}")
                         print(f"  B(x) ← Λ_old(x) = {gf_poly_str(B)}")
-                        print(f"  b ← Δ = {b}")
+                        print(f"  b ← Δ = {format_gf_element(b, 'power')}")
                         print(f"  m ← 1")
                 else:
                     m += 1
@@ -241,7 +252,10 @@ class BerlekampMassey:
             if len(poly_str) > 45:
                 poly_str = poly_str[:42] + "..."
 
-            row = f"{it.iteration:<6} {str(it.syndrome_used):<12} {str(it.discrepancy):<12} "
+            syn_str = format_gf_element(it.syndrome_used, 'power')
+            disc_str = format_gf_element(it.discrepancy, 'power')
+
+            row = f"{it.iteration:<6} {syn_str:<12} {disc_str:<12} "
             row += f"{it.length:<4} {it.m_value:<4} {update_mark:<6} {poly_str:<50}\n"
             table += row
 
@@ -279,17 +293,18 @@ class BerlekampMassey:
                 if i - j >= 0:
                     result = result + Lambda[j] * self.syndromes[i - j]
 
-            is_valid = result.is_zero()
+            is_valid = int(result) == 0
             all_valid = all_valid and is_valid
 
             status = "✓" if is_valid else "✗"
-            print(f"  i={i + 1}: S_{i + 1} + ... = {result} {status}")
+            result_str = format_gf_element(result, 'power')
+            print(f"  i={i + 1}: S_{i + 1} + ... = {result_str} {status}")
 
         return all_valid
 
 
-def compute_error_locator_polynomial(syndromes: List[GFElement],
-                                      verbose: bool = True) -> List[GFElement]:
+def compute_error_locator_polynomial(syndromes: List[galois.FieldArray],
+                                      verbose: bool = True) -> List[galois.FieldArray]:
     """
     신드롬으로부터 오류 위치 다항식 계산 (편의 함수)
 
@@ -309,20 +324,21 @@ def simple_bm_example():
     """
     간단한 BM 알고리즘 예시
     """
-    from .galois_field import GaloisField
+    from .gf_utils import create_gf, alpha_power_to_element
 
     print("\n간단한 Berlekamp-Massey 예시")
     print("=" * 60)
 
     # GF(2^4) 생성
-    gf = GaloisField(4)
-    print(f"사용 필드: {gf}")
+    gf = create_gf(4)
+    print(f"사용 필드: GF(2^4)")
 
     # 예시 신드롬: 오류 1개 케이스
     # S_1 = α^3
-    syndromes = [gf.alpha(3)]
+    alpha = gf.primitive_element
+    syndromes = [alpha ** 3]
 
-    print(f"신드롬: S_1 = {syndromes[0]}")
+    print(f"신드롬: S_1 = α^3")
 
     # BM 알고리즘 실행
     bm = BerlekampMassey(syndromes, verbose=True)

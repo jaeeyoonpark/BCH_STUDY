@@ -1,13 +1,21 @@
 """
-BCH 코드 구현
+BCH 코드 구현 (galois 라이브러리 사용)
 
 BCH (Bose-Chaudhuri-Hocquenghem) 코드는 강력한 오류 정정 코드입니다.
 이 모듈은 BCH 인코딩과 신드롬 계산을 제공합니다.
 """
 
+import galois
 import numpy as np
 from typing import List, Tuple
-from .galois_field import GaloisField, GFElement, gf_poly_eval
+from .gf_utils import (
+    create_gf,
+    get_minimal_polynomial,
+    get_conjugates,
+    alpha_power_to_element,
+    binary_to_gf_array,
+    gf_array_to_binary
+)
 
 
 class BCHCode:
@@ -20,24 +28,26 @@ class BCHCode:
     생성 다항식 g(x)의 근은 α, α^2, ..., α^(2t)
     """
 
-    def __init__(self, m: int, t: int, field: GaloisField = None):
+    def __init__(self, m: int, t: int, gf: galois.FieldArray = None):
         """
         BCH 코드 초기화
 
         Args:
             m: GF(2^m)의 차수
             t: 정정 가능한 오류 개수
-            field: Galois Field (None이면 자동 생성)
+            gf: Galois Field (None이면 자동 생성)
         """
         self.m = m
         self.t = t
         self.n = 2 ** m - 1  # 코드 길이
 
         # Galois Field 생성
-        if field is None:
-            self.field = GaloisField(m)
+        if gf is None:
+            self.gf = create_gf(m)
         else:
-            self.field = field
+            self.gf = gf
+
+        self.alpha = self.gf.primitive_element
 
         # 생성 다항식 계산
         self.generator_poly = self._compute_generator_polynomial()
@@ -53,10 +63,10 @@ class BCHCode:
         g(x)는 α, α^2, ..., α^(2t)를 근으로 가지는 최소 다항식들의 곱
 
         Returns:
-            생성 다항식의 계수 (이진 계수)
+            생성 다항식의 계수 (이진 계수, 낮은 차수부터)
         """
         # 초기화: g(x) = 1
-        g = [1]
+        g_poly = galois.Poly([1], field=galois.GF(2))
 
         # 이미 처리한 conjugate 클래스 추적
         processed = set()
@@ -67,95 +77,21 @@ class BCHCode:
             if i in processed:
                 continue
 
-            # 최소 다항식 계산: (x - α^i)와 그 conjugate들
-            min_poly, conjugates = self._minimal_polynomial(i)
-
-            # 이 conjugate 클래스의 모든 원소를 처리된 것으로 표시
+            # Conjugate 집합 찾기
+            conjugates = get_conjugates(i, self.m)
             processed.update(conjugates)
 
+            # 최소 다항식 계산
+            element = self.alpha ** i
+            min_poly = element.minimal_poly()
+
             # g(x) = g(x) * min_poly(x)
-            g = self._poly_multiply_binary(g, min_poly)
+            g_poly = g_poly * min_poly
 
-        return g
+        # 계수를 리스트로 변환 (낮은 차수부터)
+        coeffs = [int(c) for c in g_poly.coeffs[::-1]]
 
-    def _minimal_polynomial(self, power: int) -> Tuple[List[int], set]:
-        """
-        α^power의 최소 다항식 계산
-
-        GF(2^m)에서 α^power의 최소 다항식은
-        (x - α^power)(x - α^(power*2))(x - α^(power*4))...를 모두 곱한 것
-
-        Returns:
-            (최소 다항식의 이진 계수, conjugate 집합)
-        """
-        # Conjugate 집합 찾기: {power, power*2, power*4, ..., power*2^k} mod (2^m - 1)
-        conjugates = set()
-        current = power
-        order = self.field.order
-
-        while current not in conjugates:
-            conjugates.add(current % order)
-            current = (current * 2) % order
-
-        # 최소 다항식 = ∏(x - α^i) for i in conjugates
-        result = [1]  # x^0 계수
-        for conj in conjugates:
-            # (x - α^conj) = x + α^conj (GF(2)에서 - = +)
-            # 이진 표현으로 곱셈
-            alpha_poly = self.field.alpha_to_poly[conj]
-            term = [alpha_poly, 1]  # α^conj + x
-            result = self._poly_multiply_binary(result, term)
-
-        return result, conjugates
-
-    def _poly_multiply_binary(self, p1: List[int], p2: List[int]) -> List[int]:
-        """
-        이진 계수 다항식 곱셈 (GF(2) 계수)
-
-        Args:
-            p1, p2: 다항식 계수 리스트
-
-        Returns:
-            곱셈 결과
-        """
-        result = [0] * (len(p1) + len(p2) - 1)
-
-        for i, c1 in enumerate(p1):
-            for j, c2 in enumerate(p2):
-                # GF(2)의 곱셈과 덧셈
-                result[i + j] ^= self._gf_multiply_binary(c1, c2)
-
-        return result
-
-    def _gf_multiply_binary(self, a: int, b: int) -> int:
-        """
-        GF(2^m)에서 두 원소의 곱셈 (이진 표현)
-
-        Args:
-            a, b: GF 원소 (이진 표현)
-
-        Returns:
-            a * b
-        """
-        if a == 0 or b == 0:
-            return 0
-
-        # α의 지수로 변환
-        if a == 1:
-            return b
-        if b == 1:
-            return a
-
-        power_a = self.field.poly_to_alpha.get(a, None)
-        power_b = self.field.poly_to_alpha.get(b, None)
-
-        if power_a is None or power_b is None:
-            return 0
-
-        # 지수 덧셈
-        power_result = (power_a + power_b) % self.field.order
-
-        return self.field.alpha_to_poly[power_result]
+        return coeffs
 
     def encode(self, message: List[int]) -> List[int]:
         """
@@ -170,47 +106,31 @@ class BCHCode:
             코드워드 (길이 n)
         """
         if len(message) != self.k:
-            raise ValueError(f"Message length must be {self.k}")
+            raise ValueError(f"Message length must be {self.k}, got {len(message)}")
 
-        # x^(n-k) * m(x) - 메시지를 왼쪽으로 시프트
-        # 다항식 표현: m(x) * x^(n-k) = m_0·x^(n-k) + m_1·x^{n-k+1} + ...
-        # 리스트 표현: [0, 0, ..., 0, m_0, m_1, ...] (앞에 n-k개의 0)
-        shifted = [0] * (self.n - self.k) + message
+        # galois 다항식으로 변환
+        m_poly = galois.Poly(message[::-1], field=galois.GF(2))  # 높은 차수부터
+        g_poly = galois.Poly(self.generator_poly[::-1], field=galois.GF(2))
 
-        # parity = x^(n-k) * m(x) mod g(x)
-        parity = self._poly_mod_binary(shifted, self.generator_poly)
+        # x^(n-k) * m(x)
+        shifted = m_poly * galois.Poly.Degrees([self.n - self.k], field=galois.GF(2))
 
-        # 체계적 코드워드: c(x) = x^(n-k)·m(x) - r(x) (GF(2)에서 - = +)
-        # 리스트 표현: [r_0, r_1, ..., r_{n-k-1}, m_0, m_1, ..., m_{k-1}]
+        # parity = shifted mod g(x)
+        _, remainder = divmod(shifted, g_poly)
+
+        # 나머지 계수 추출 (낮은 차수부터)
+        parity_coeffs = [int(c) for c in remainder.coeffs[::-1]]
+
+        # 길이 맞추기
+        parity = parity_coeffs + [0] * (self.n - self.k - len(parity_coeffs))
+        parity = parity[:self.n - self.k]
+
+        # 체계적 코드워드: [parity | message]
         codeword = parity + message
 
         return codeword
 
-    def _poly_mod_binary(self, dividend: List[int], divisor: List[int]) -> List[int]:
-        """
-        이진 다항식 나머지 연산
-
-        Args:
-            dividend: 피제수
-            divisor: 제수
-
-        Returns:
-            나머지
-        """
-        # 복사본 생성
-        result = dividend[:]
-        divisor_len = len(divisor)
-
-        for i in range(len(result) - divisor_len, -1, -1):
-            if result[i + divisor_len - 1] == 1:
-                for j in range(divisor_len):
-                    result[i + j] ^= divisor[j]
-
-        # 앞의 0 제거하고 나머지 반환
-        remainder = result[:divisor_len - 1]
-        return remainder
-
-    def compute_syndromes(self, received: List[int]) -> List[GFElement]:
+    def compute_syndromes(self, received: List[int]) -> List[galois.FieldArray]:
         """
         수신된 코드워드의 신드롬 계산
 
@@ -226,20 +146,16 @@ class BCHCode:
         if len(received) != self.n:
             raise ValueError(f"Received vector length must be {self.n}")
 
-        syndromes = []
+        # R(x)를 galois 다항식으로 변환 (높은 차수부터)
+        r_array = binary_to_gf_array(received, self.gf)
+        r_poly = galois.Poly(r_array[::-1], field=self.gf)
 
-        # R(x)를 GF 원소로 변환
-        r_poly = []
-        for bit in received:
-            if bit == 1:
-                r_poly.append(self.field.one())
-            else:
-                r_poly.append(self.field.zero())
+        syndromes = []
 
         # S_i = R(α^i) for i = 1, ..., 2t
         for i in range(1, 2 * self.t + 1):
-            alpha_i = self.field.alpha(i)
-            syndrome = gf_poly_eval(r_poly, alpha_i)
+            alpha_i = self.alpha ** i
+            syndrome = r_poly(alpha_i)
             syndromes.append(syndrome)
 
         return syndromes
@@ -275,14 +191,18 @@ class BCHCode:
                 else:
                     terms.append(f"x^{i}")
 
-        print(" + ".join(terms[::-1]))
+        if terms:
+            print(" + ".join(reversed(terms)))
+        else:
+            print("0")
         print(f"이진 표현: {self.generator_poly[::-1]}")
         print(f"차수: {len(self.generator_poly) - 1}")
 
 
-def syndrome_to_string(syndromes: List[GFElement]) -> str:
+def syndrome_to_string(syndromes: List[galois.FieldArray]) -> str:
     """신드롬을 문자열로 변환"""
-    return "[" + ", ".join(str(s) for s in syndromes) + "]"
+    from .gf_utils import format_gf_element
+    return "[" + ", ".join(format_gf_element(s, 'power') for s in syndromes) + "]"
 
 
 def codeword_to_string(codeword: List[int]) -> str:
