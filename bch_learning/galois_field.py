@@ -270,13 +270,16 @@ class GaloisField:
         print(f"{'Power':<10} {'Polynomial':<15} {'Binary':<10} {'Decimal':<10}")
         print("-" * 60)
 
-        print(f"{'α^(-∞)':<10} {'0':<15} {0:0{self.m}b:<10} {0:<10}")
+        # 0 원소
+        binary_str = format(0, f'0{self.m}b')
+        print(f"{'α^(-∞)':<10} {'0':<15} {binary_str:<10} {0:<10}")
 
         for i in range(self.order):
             poly = self.alpha_to_poly[i]
             # 다항식 문자열 표현
             poly_str = self._poly_to_string(poly)
-            print(f"{'α^' + str(i):<10} {poly_str:<15} {poly:0{self.m}b:<10} {poly:<10}")
+            binary_str = format(poly, f'0{self.m}b')
+            print(f"{'α^' + str(i):<10} {poly_str:<15} {binary_str:<10} {poly:<10}")
         print("-" * 60)
 
     def _poly_to_string(self, poly: int) -> str:
